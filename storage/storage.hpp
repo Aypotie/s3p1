@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <regex>
+#include "../data_structures/vector.hpp"
 #include "../schema/schema.hpp"
 #include "./file.hpp"
 #include "./condition.hpp"
@@ -22,15 +23,15 @@ struct Storage {
         createStructure();
     }
 
-    void writeList(string path, string tableName, vector<string> cols) {
+    void writeList(string path, string tableName, Vector<string> cols) {
         ofstream file(path);
 
         file << tableName << "_pk,";
         for (int i = 0; i < cols.size(); i++) {
             if (i == cols.size() - 1) {
-                file << cols[i];
+                file << cols.get(i);
             } else {
-                file << cols[i] << ",";
+                file << cols.get(i) << ",";
             }
         }
         file << endl;
@@ -44,8 +45,11 @@ struct Storage {
         } else {
             cerr << "Storage directory " << schema.name << " already exists" << endl; 
         }
-        for (auto pair : schema.structure) {
-            string tablePath = schema.name + "/" + pair.first;
+        Vector<string> tables = schema.structure.keys();
+        for (int i = 0; i < tables.size(); i++) {
+            string tableName = tables.get(i);
+            Vector<string> cols = schema.structure.get(tableName);
+            string tablePath = schema.name + "/" + tableName;
             if (!fs::exists(tablePath)) {
                 fs::create_directory(tablePath);
                 
@@ -55,9 +59,9 @@ struct Storage {
 
             string pagePath = tablePath + "/1.csv";
             if (!fs::exists(pagePath)) {
-                writeList(pagePath, pair.first, pair.second);
+                writeList(pagePath, tableName, cols);
 
-                string pkSequencePath = tablePath + "/" + pair.first + "_pk_sequence"; 
+                string pkSequencePath = tablePath + "/" + tableName + "_pk_sequence"; 
                 ofstream file1(pkSequencePath);
                 file1 << 0;
                 file1.close();
@@ -67,43 +71,47 @@ struct Storage {
         }
     }
 
-    void insert(string baseDir, string tableName, vector<string> values) {
+    void insert(string baseDir, string tableName, Vector<string> values) {
         string tablePath = baseDir + "/" + tableName;
         smatch match;
-        vector<string> pages = getCSVFromDir(tablePath);
+        Vector<string> pages = getCSVFromDir(tablePath);
 
-        for (string pagePath : pages) {
+        for (int i = 0; i < pages.size(); i++) {
+            string pagePath = pages.get(i);
             if (countStringsInFile(pagePath) - 1 < schema.tuplesLimit) {
                 AddRowInCSV(pagePath, tablePath, tableName, values);
                 return;
             }
         }
         string newPagePath = tablePath + "/" + to_string(pages.size()+1) + ".csv";
-        writeList(newPagePath, tableName, schema.structure[tableName]);
+        writeList(newPagePath, tableName, schema.structure.get(tableName));
         AddRowInCSV(newPagePath, tablePath, tableName, values);
     }
 
-    void fDelete(vector<string> tables, string condition) {
+    void fDelete(Vector<string> tables, string condition) {
         if (condition == "") {
-            for (string tableName : tables) {
-                vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                for (string pagePath : pages) {
-                    fs::remove(pagePath);
+            for (int i = 0; i < tables.size(); i++) {
+                string tableName = tables.get(i);
+                Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+                for (int j = 0; j < pages.size(); j++) {
+                    fs::remove(pages.get(j));
                 }
                 string pagePath = schema.name + "/" + tableName + "/1.csv";
-                writeList(pagePath, tableName, schema.structure[tableName]);
+                writeList(pagePath, tableName, schema.structure.get(tableName));
             }
         } else {
             Node* node = getConditionTree(condition);
-            for (string tableName : tables) {
-                vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                for (string pagePath : pages) {
-                    vector<vector<string>> page = readCSV(pagePath);
-                    vector<string> header = page[0];
+            for (int i = 0; i < tables.size(); i++) {
+                string tableName = tables.get(i);
+                Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+                for (int j = 0; j < pages.size(); j++) {
+                    string pagePath = pages.get(j);
+                    Vector<Vector<string>> page = readCSV(pagePath);
+                    Vector<string> header = page.get(0);
                     int pageLen = page.size();
-                    for (size_t i = 1; i < pageLen; i++) {
-                        if (isValidRow(node, page[i], header, tables, tableName)) {
-                            page.erase(page.begin() + i);
+                    for (size_t k = 1; k < pageLen; k++) {
+                        if (isValidRow(node, page.get(k), header, tables, tableName)) {
+                            page.remove(k);
                             pageLen--;
                             i--;
                         }
@@ -114,24 +122,50 @@ struct Storage {
         }
     }
 
-    void select(vector<string> columns, vector<string> tables, string condition) {
+    void select(Vector<string> columns, Vector<string> tables, string condition) {
         // Проверяем, что таблица существует и это единственная таблица
-        for (string tableName : tables) {
-            if (schema.structure.find(tableName) == schema.structure.end()) {
+        for (int i = 0; i < tables.size(); i++) {
+            string tableName = tables.get(i);
+            if (!schema.structure.contains(tableName)) {
                 cerr << "Table '" << tableName << "' does not exist." << endl;
+                return;
+            }
+        }
+        
+        // Проверяем, что все таблицы есть в колонках
+        Vector<string> tablesInCols;
+        for (int j = 0; j < tables.size(); j++) {
+            string tableName = tables.get(j);
+            bool colFoundInTables = false;
+            for (int i = 0; i < columns.size(); i++) {
+                Vector<string> parts = split(columns.get(i), ".");
+                if (parts.size() != 2) {
+                    cerr << "incorrect column " + columns.get(i) << endl;
+                    return;
+                }
+                string colTableName = parts.get(0);
+                string column = parts.get(1);
+
+                if (tableName == colTableName) {
+                    colFoundInTables = true;
+                }
+            }
+            if (!colFoundInTables) {
+                cerr << "table " + tableName + " not found in columns" << endl;
                 return;
             }
         }
 
         if (condition == "") { // без WHERE
             if (tables.size() == 1) { // для одной таблицы
-                string tableName = tables[0];
+                string tableName = tables.get(0);
 
                 // Проверяем, что все колонки относятся к таблице
-                vector<string> availableColumns = schema.structure[tableName];
-                vector<string> columnsToSelect;
+                Vector<string> availableColumns = schema.structure.get(tableName);
+                Vector<string> columnsToSelect;
 
-                for (const string& fullColumn : columns) {
+                for (int i = 0; i < columns.size(); i++) {
+                    string fullColumn = columns.get(i);
                     // Разделяем строку на таблицу и колонку (формат таблица.колонка)
                     size_t dotPos = fullColumn.find(".");
                     if (dotPos == string::npos) {
@@ -149,35 +183,38 @@ struct Storage {
                     }
 
                     // Проверяем, что колонка существует в таблице
-                    if (find(availableColumns.begin(), availableColumns.end(), requestedColumn) == availableColumns.end()) {
+                    if (availableColumns.find(requestedColumn) == -1) {
                         cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
                         return;
                     }
 
                     // Добавляем колонку в список для вывода
-                    columnsToSelect.push_back(requestedColumn);
+                    columnsToSelect.pushBack(requestedColumn);
                 }
 
                 // Теперь читаем CSV-файлы и выводим только запрошенные колонки
-                vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                for (const string& pagePath : pages) {
-                    vector<vector<string>> page = readCSV(pagePath);
-                    vector<string> header = page[0];
+                Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+                for (int i = 0; i < pages.size(); i++) {
+                    string pagePath = pages.get(i);
+                    Vector<Vector<string>> page = readCSV(pagePath);
+                    Vector<string> header = page.get(0);
 
                     // Определяем индексы нужных колонок
-                    vector<int> columnIndexes;
-                    for (const string& col : columnsToSelect) {
-                        auto it = find(header.begin(), header.end(), col);
-                        if (it != header.end()) {
-                            columnIndexes.push_back(distance(header.begin(), it));
+                    Vector<int> columnIndexes;
+                    for (int j = 0; j < columnsToSelect.size(); j++) {
+                        string col = columnsToSelect.get(j);
+                        int index = header.find(col);
+                        if (index != -1) {
+                            columnIndexes.pushBack(index);
                         }
                     }
 
-                    for (vector<string> row : page) {
+                    for (int j = 0; j < page.size(); j++) {
+                        Vector<string> row = page.get(j);
                         // Выводим только те колонки, которые были запрошены
-                        for (int i = 0; i < columnIndexes.size(); ++i) {
-                            cout << row[columnIndexes[i]];
-                            if (i < columnIndexes.size() - 1) {
+                        for (int k = 0; k < columnIndexes.size(); k++) {
+                            cout << row.get(columnIndexes.get(k));
+                            if (k < columnIndexes.size() - 1) {
                                 cout << ", ";
                             }
                         }
@@ -185,16 +222,18 @@ struct Storage {
                     }
                 }
             } else { // для нескольких
-                vector<vector<vector<string>>> tablesData;
-                vector<vector<int>> columnIndexesList;
+                Vector<Vector<Vector<string>>> tablesData;
+                Vector<Vector<int>> columnIndexesList;
 
                 // Собираем данные для всех таблиц
-                for (const string& tableName : tables) {
-                    vector<string> availableColumns = schema.structure[tableName];
-                    vector<string> columnsToSelect;
+                for (int i = 0; i < tables.size(); i++) {
+                    string tableName = tables.get(i);
+                    Vector<string> availableColumns = schema.structure.get(tableName);
+                    Vector<string> columnsToSelect;
 
                     // Определяем, какие колонки нужно выбирать из каждой таблицы
-                    for (const string& fullColumn : columns) {
+                    for (int j = 0; j < columns.size(); j++) {
+                        string fullColumn = columns.get(j);
                         size_t dotPos = fullColumn.find(".");
                         if (dotPos == string::npos) {
                             cerr << "Error: Column '" << fullColumn << "' is not in 'table.column' format." << endl;
@@ -203,66 +242,73 @@ struct Storage {
 
                         string requestedTable = fullColumn.substr(0, dotPos);
                         string requestedColumn = fullColumn.substr(dotPos + 1);
-
                         if (requestedTable == tableName) {
-                            if (find(availableColumns.begin(), availableColumns.end(), requestedColumn) == availableColumns.end()) {
+                            if (availableColumns.find(requestedColumn) == -1) {
                                 cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
                                 return;
                             }
-                            columnsToSelect.push_back(requestedColumn);
+                            columnsToSelect.pushBack(requestedColumn);
                         }
                     }
 
                     // Читаем CSV-файлы таблицы и собираем строки
-                    vector<vector<string>> tableRows;
-                    vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                    for (const string& pagePath : pages) {
-                        vector<vector<string>> page = readCSV(pagePath);
-                        vector<string> header = page[0];
+                    Vector<Vector<string>> tableRows;
+                    Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+                    for (int i = 0; i < pages.size(); i++) {
+                        string pagePath = pages.get(i);
+                        Vector<Vector<string>> page = readCSV(pagePath);
+                        Vector<string> header = page.get(0);
 
                         // Определяем индексы нужных колонок
-                        vector<int> columnIndexes;
-                        for (const string& col : columnsToSelect) {
-                            auto it = find(header.begin(), header.end(), col);
-                            if (it != header.end()) {
-                                columnIndexes.push_back(distance(header.begin(), it));
+                        Vector<int> columnIndexes;
+                        for (int j = 0; j < columnsToSelect.size(); j++) {
+                            string col = columnsToSelect.get(j);
+                            int index = header.find(col);
+                            if (index != -1) {
+                                columnIndexes.pushBack(index);
                             }
                         }
-                        columnIndexesList.push_back(columnIndexes);
+                        columnIndexesList.pushBack(columnIndexes);
 
-                        for (int i = 1; i < page.size(); i++) {
-                            tableRows.push_back(page[i]);
+                        for (int j = 1; j < page.size(); j++) {
+                            tableRows.pushBack(page.get(j));
                         }
                     }
-                    tablesData.push_back(tableRows);
+                    tablesData.pushBack(tableRows);
                 }
-
+                // cout << tablesData << endl;
                 // Выполняем декартово произведение данных
-                vector<vector<string>> crossProduct;
-                vector<string> currentCombination;
-
+                Vector<Vector<string>> crossProduct;
+                Vector<string> currentCombination;
+                // cout << columnIndexesList << endl;
                 function<void(int)> generateCombinations = [&](int depth) {
                     if (depth == tables.size()) {
-                        crossProduct.push_back(currentCombination);
+                        crossProduct.pushBack(currentCombination.copy());
                         return;
                     }
 
-                    for (const vector<string>& row : tablesData[depth]) {
-                        for (int idx : columnIndexesList[depth]) {
-                            currentCombination.push_back(row[idx]);
+                    Vector<Vector<string>> tableData = tablesData.get(depth);
+                    for (int i = 0; i < tableData.size(); i++) {
+                        Vector<string> row = tableData.get(i);
+                        Vector<int> columnIndexes = columnIndexesList.get(depth);
+                        for (int j = 0; j < columnIndexes.size(); j++) {
+                            currentCombination.pushBack(row.get(columnIndexes.get(j)));
                         }
                         generateCombinations(depth + 1);
-                        currentCombination.resize(currentCombination.size() - columnIndexesList[depth].size());
+                        int newLen = currentCombination.size() - columnIndexes.size();
+                        currentCombination.resize(newLen);
                     }
                 };
 
                 generateCombinations(0);
 
                 // Выводим результаты
-                for (const auto& combination : crossProduct) {
-                    for (int i = 0; i < combination.size(); ++i) {
-                        cout << combination[i];
-                        if (i < combination.size() - 1) {
+                cout << columns << endl;
+                for (int i = 0; i < crossProduct.size(); i++) {
+                    Vector<string> combination = crossProduct.get(i);
+                    for (int j = 0; j < combination.size(); j++) {
+                        cout << combination.get(j);
+                        if (j < combination.size() - 1) {
                             cout << ", ";
                         }
                     }
@@ -272,13 +318,14 @@ struct Storage {
         } else { // с WHERE
             Node* node = getConditionTree(condition);
             if (tables.size() == 1) { // для одной таблицы
-                string tableName = tables[0];
+                string tableName = tables.get(0);
 
                 // Проверяем, что все колонки относятся к таблице
-                vector<string> availableColumns = schema.structure[tableName];
-                vector<string> columnsToSelect;
+                Vector<string> availableColumns = schema.structure.get(tableName);
+                Vector<string> columnsToSelect;
 
-                for (const string& fullColumn : columns) {
+                for (int i = 0; i < columns.size(); i++) {
+                    string fullColumn = columns.get(i);
                     // Разделяем строку на таблицу и колонку (формат таблица.колонка)
                     size_t dotPos = fullColumn.find(".");
                     if (dotPos == string::npos) {
@@ -296,35 +343,38 @@ struct Storage {
                     }
 
                     // Проверяем, что колонка существует в таблице
-                    if (find(availableColumns.begin(), availableColumns.end(), requestedColumn) == availableColumns.end()) {
+                    if (availableColumns.find(requestedColumn) == -1) {
                         cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
                         return;
                     }
 
                     // Добавляем колонку в список для вывода
-                    columnsToSelect.push_back(requestedColumn);
+                    columnsToSelect.pushBack(requestedColumn);
                 }
 
                 // Теперь читаем CSV-файлы и выводим только запрошенные колонки
-                vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                for (const string& pagePath : pages) {
-                    vector<vector<string>> page = readCSV(pagePath);
-                    vector<string> header = page[0];
+                Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+                for (int i = 0; i < pages.size(); i++) {
+                    string pagePath = pages.get(i);
+                    Vector<Vector<string>> page = readCSV(pagePath);
+                    Vector<string> header = page.get(0);
 
                     // Определяем индексы нужных колонок
-                    vector<int> columnIndexes;
-                    for (const string& col : columnsToSelect) {
-                        auto it = find(header.begin(), header.end(), col);
-                        if (it != header.end()) {
-                            columnIndexes.push_back(distance(header.begin(), it));
+                    Vector<int> columnIndexes;
+                    for (int j = 0; j < columnsToSelect.size(); j++) {
+                        string col = columnsToSelect.get(j);
+                        int index = header.find(col);
+                        if (index != -1) {
+                            columnIndexes.pushBack(index);
                         }
                     }
-                    for (vector<string> row : page) {
+                    for (int j = 0; j < page.size(); j++) {
+                        Vector<string> row = page.get(j);
                         // Выводим только те колонки, которые были запрошены
                         if (isValidRow(node, row, header, tables, tableName)) {
-                            for (int i = 0; i < columnIndexes.size(); ++i) {
-                                cout << row[columnIndexes[i]];
-                                if (i < columnIndexes.size() - 1) {
+                            for (int k = 0; k < columnIndexes.size(); k++) {
+                                cout << row.get(columnIndexes.get(k));
+                                if (k < columnIndexes.size() - 1) {
                                     cout << ", ";
                                 }
                             }
@@ -333,16 +383,18 @@ struct Storage {
                     }
                 }
             } else { // для нескольких
-                vector<vector<vector<string>>> tablesData;
-                vector<vector<int>> columnIndexesList;
+                Vector<Vector<Vector<string>>> tablesData;
+                Vector<Vector<int>> columnIndexesList;
 
                 // Собираем данные для всех таблиц
-                for (const string& tableName : tables) {
-                    vector<string> availableColumns = schema.structure[tableName];
-                    vector<string> columnsToSelect;
+                for (int i = 0; i < tables.size(); i++) {
+                    string tableName = tables.get(i);
+                    Vector<string> availableColumns = schema.structure.get(tableName);
+                    Vector<string> columnsToSelect;
 
                     // Определяем, какие колонки нужно выбирать из каждой таблицы
-                    for (const string& fullColumn : columns) {
+                    for (int j = 0; j < columns.size(); j++) {
+                        string fullColumn = columns.get(j);
                         size_t dotPos = fullColumn.find(".");
                         if (dotPos == string::npos) {
                             cerr << "Error: Column '" << fullColumn << "' is not in 'table.column' format." << endl;
@@ -353,66 +405,75 @@ struct Storage {
                         string requestedColumn = fullColumn.substr(dotPos + 1);
 
                         if (requestedTable == tableName) {
-                            if (find(availableColumns.begin(), availableColumns.end(), requestedColumn) == availableColumns.end()) {
+                            if (availableColumns.find(requestedColumn) == -1) {
                                 cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
                                 return;
                             }
-                            columnsToSelect.push_back(requestedColumn);
+                            columnsToSelect.pushBack(requestedColumn);
                         }
                     }
 
                     // Читаем CSV-файлы таблицы и собираем строки
-                    vector<vector<string>> tableRows;
-                    vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                    for (const string& pagePath : pages) {
-                        vector<vector<string>> page = readCSV(pagePath);
-                        vector<string> header = page[0];
+                    Vector<Vector<string>> tableRows;
+                    Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+                    for (int i = 0; i < pages.size(); i++) {
+                        string pagePath = pages.get(i);
+                        Vector<Vector<string>> page = readCSV(pagePath);
+                        Vector<string> header = page.get(0);
 
                         // Определяем индексы нужных колонок
-                        vector<int> columnIndexes;
-                        for (const string& col : columnsToSelect) {
-                            auto it = find(header.begin(), header.end(), col);
-                            if (it != header.end()) {
-                                columnIndexes.push_back(distance(header.begin(), it));
+                        Vector<int> columnIndexes;
+                        for (int j = 0; j < columnsToSelect.size(); j++) {
+                            string col = columnsToSelect.get(j);
+                            int index = header.find(col);
+                            if (index != -1) {
+                                columnIndexes.pushBack(index);
                             }
                         }
-                        columnIndexesList.push_back(columnIndexes);
+                        columnIndexesList.pushBack(columnIndexes);
 
-                        for (int i = 1; i < page.size(); i++) {
-                            if (isValidRow(node, page[i], header, tables, tableName)) {
-                                tableRows.push_back(page[i]);
+                        for (int k = 1; k < page.size(); k++) {
+                            Vector<string> row = page.get(k);
+                            if (isValidRow(node, row, header, tables, tableName)) {
+                                tableRows.pushBack(row);
                             }
                         }
                     }
-                    tablesData.push_back(tableRows);
+                    tablesData.pushBack(tableRows);
                 }
 
                 // Выполняем декартово произведение данных
-                vector<vector<string>> crossProduct;
-                vector<string> currentCombination;
+                Vector<Vector<string>> crossProduct;
+                Vector<string> currentCombination;
 
                 function<void(int)> generateCombinations = [&](int depth) {
                     if (depth == tables.size()) {
-                        crossProduct.push_back(currentCombination);
+                        crossProduct.pushBack(currentCombination.copy());
                         return;
                     }
 
-                    for (const vector<string>& row : tablesData[depth]) {
-                        for (int idx : columnIndexesList[depth]) {
-                            currentCombination.push_back(row[idx]);
+                    Vector<Vector<string>> tableData = tablesData.get(depth);
+                    for (int i = 0; i < tableData.size(); i++) {
+                        Vector<string> row = tableData.get(i);
+                        Vector<int> columnIndexes = columnIndexesList.get(depth);
+                        for (int j = 0; j < columnIndexes.size(); j++) {
+                            currentCombination.pushBack(row.get(columnIndexes.get(j)));
                         }
                         generateCombinations(depth + 1);
-                        currentCombination.resize(currentCombination.size() - columnIndexesList[depth].size());
+                        int newLen = currentCombination.size() - columnIndexes.size();
+                        currentCombination.resize(newLen);
                     }
                 };
 
                 generateCombinations(0);
 
                 // Выводим результаты
-                for (const auto& combination : crossProduct) {
-                    for (int i = 0; i < combination.size(); ++i) {
-                        cout << combination[i];
-                        if (i < combination.size() - 1) {
+                cout << columns << endl;
+                for (int i = 0; i < crossProduct.size(); i++) {
+                    Vector<string> combination = crossProduct.get(i);
+                    for (int j = 0; j < combination.size(); j++) {
+                        cout << combination.get(j);
+                        if (j < combination.size() - 1) {
                             cout << ", ";
                         }
                     }

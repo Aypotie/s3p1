@@ -4,6 +4,8 @@
 #include <iostream>
 #include <fstream>
 #include "../lib/json.hpp"
+#include "../data_structures/map.hpp"
+#include "../data_structures/vector.hpp"
 
 using json = nlohmann::json;
 using namespace std;
@@ -26,14 +28,11 @@ ostream& operator<<(ostream& os, map<string, vector<string>>& m) {
 struct Schema {
     string name;
     int tuplesLimit;
-    map<string, vector<string>> structure;
+    Map<Vector<string>> structure;
 };
 
 Schema readSchema(string filename) {
     Schema* sc = new Schema();
-    string name;
-    int tuplesLimit;
-    map<string, vector<string>> structure;
 
     ifstream file(filename);
 
@@ -42,7 +41,14 @@ Schema readSchema(string filename) {
 
     sc->name = jsonSchema["name"];
     sc->tuplesLimit = jsonSchema["tuples_limit"];
-    sc->structure = jsonSchema["structure"];
+    auto structure = jsonSchema["structure"];
+    for (auto it = structure.begin(); it != structure.end(); ++it) {
+        Vector<string> columns;
+        for (string column : it.value()) { // Доступ к значению правильно
+            columns.pushBack(column);
+        }
+        sc->structure.put(it.key(), columns); // Доступ к ключу правильно
+    }
 
     return *sc;
 }

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <regex>
 #include <string>
+#include "../data_structures/vector.hpp"
 #include "../schema/schema.hpp"
 #include "./storage.hpp"
 #include "./utils.hpp"
@@ -24,15 +25,15 @@ void menu(string command, Storage storage) {
         string tableName = match[1].str();
         string valuesStr = match[2].str();
 
-        if (storage.schema.structure.find(tableName) == storage.schema.structure.end()) {
+        if (!storage.schema.structure.contains(tableName)) {
             cerr << "Table was not found" << endl;
             return;
         }
 
-        vector<string> cols = storage.schema.structure[tableName];
+        Vector<string> cols = storage.schema.structure.get(tableName);
 
         // Парсим значения из VALUES(...)
-        vector<string> values = split(valuesStr, ",");
+        Vector<string> values = split(valuesStr, ",");
 
         if (values.size() != cols.size()) {
             cerr << "Incorrect count of columns" << endl;
@@ -40,9 +41,9 @@ void menu(string command, Storage storage) {
         }
 
         // Убираем первые и последние кавычки
-        for (auto& value : values) {
-            if (value.front() == '\'' && value.back() == '\'') {
-                value = trim(value, '\'');
+        for (int i = 0; i < values.size(); i++) {
+            if (values.get(i).front() == '\'' && values.get(i).back() == '\'') {
+                values.set(i, trim(values.get(i), '\''));
             } else {
                 cerr << "Error: All values must be enclosed in quotes." << endl;
                 return;
@@ -54,8 +55,8 @@ void menu(string command, Storage storage) {
     } else if (regex_match(command, match, selectRegex)) {
         string columnsStr = match[1].str();
         string tablesStr = match[2].str();
-        vector<string> tables = split(tablesStr, ",");
-        vector<string> columns = split(columnsStr, ",");
+        Vector<string> tables = split(tablesStr, ",");
+        Vector<string> columns = split(columnsStr, ",");
 
         storage.select(columns, tables, "");
         
@@ -63,19 +64,19 @@ void menu(string command, Storage storage) {
         string columnsStr = match[1].str();
         string tablesStr = match[2].str();
         string condition = match[3].str();
-        vector<string> tables = split(tablesStr, ",");
-        vector<string> columns = split(columnsStr, ",");
+        Vector<string> tables = split(tablesStr, ",");
+        Vector<string> columns = split(columnsStr, ",");
 
         storage.select(columns, tables, condition);
     } else if (regex_match(command, match, deleteRegex)) {
         string tablesStr = match[1].str();
-        vector<string> tables = split(tablesStr, ",");
+        Vector<string> tables = split(tablesStr, ",");
 
         storage.fDelete(tables, "");
     } else if (regex_match(command, match, deleteWhereRegex)) {
         string tablesStr = match[1].str();
         string condition = match[2].str();
-        vector<string> tables = split(tablesStr, ",");
+        Vector<string> tables = split(tablesStr, ",");
 
         storage.fDelete(tables, condition);
     } else {

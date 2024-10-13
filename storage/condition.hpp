@@ -3,11 +3,12 @@
 
 #include <iostream>
 #include <string>
-#include <vector>
 #include <regex>
 #include <algorithm>
 #include <unordered_map>
 #include "./utils.hpp"
+
+#include "../data_structures/vector.hpp"
 
 // Тип узла
 enum class NodeType {
@@ -28,31 +29,38 @@ struct Node {
 };
 
 // Вспомогательная функция для разделения строки по оператору
-vector<string> splitByOperator(const string& query, const string& op) {
+Vector<string> splitByOperator(const string& query, const string& op) {
     string operatorPattern = "\\s+" + op + "\\s+";
     regex re(operatorPattern, regex_constants::icase);
     sregex_token_iterator it(query.begin(), query.end(), re, -1);
     sregex_token_iterator end;
-    return vector<string>(it, end);
+
+    Vector<string> result;
+    while (it != end) {
+        result.pushBack(*it);
+        ++it;
+    }
+
+    return result;
 }
 
 
 Node* getConditionTree(const string& query) {
-    auto orParts = splitByOperator(query, "OR");
+    Vector<string> orParts = splitByOperator(query, "OR");
 
     // OR
     if (orParts.size() > 1) {
         Node* root = new Node(NodeType::OrNode);
-        root->left = getConditionTree(orParts[0]);
+        root->left = getConditionTree(orParts.get(0));
         root->right = getConditionTree(join(orParts, 1, "OR"));
         return root;
     }
 
     // AND
-    auto andParts = splitByOperator(query, "AND");
+    Vector<string> andParts = splitByOperator(query, "AND");
     if (andParts.size() > 1) {
         Node* root = new Node(NodeType::AndNode);
-        root->left = getConditionTree(andParts[0]);
+        root->left = getConditionTree(andParts.get(0));
         root->right = getConditionTree(join(andParts, 1, "AND"));
         return root;
     }
@@ -61,8 +69,8 @@ Node* getConditionTree(const string& query) {
     return new Node(NodeType::ConditionNode, trim(query));
 }
 
-bool isValidRow(Node* node, const vector<string>& row, const vector<string>& header,
-                const vector<string>& neededTables, const string& curTable) {
+bool isValidRow(Node* node, const Vector<string>& row, const Vector<string>& header,
+                const Vector<string>& neededTables, const string& curTable) {
     if (!node) {
         return false;
     }
@@ -74,28 +82,27 @@ bool isValidRow(Node* node, const vector<string>& row, const vector<string>& hea
             return false;
         }
 
-        string part1 = trim(parts[0]);
-        string value = trim(trim(parts[1]), '\'');
+        string part1 = trim(parts.get(0));
+        string value = trim(trim(parts.get(1)), '\'');
 
-        auto part1Splitted = split(part1, ".");
+        Vector<string> part1Splitted = split(part1, ".");
         if (part1Splitted.size() != 2) {
             return false;
         }
 
-        string table = part1Splitted[0];
-        string column = part1Splitted[1];
+        string table = part1Splitted.get(0);
+        string column = part1Splitted.get(1);
         // проверяем, что таблица есть в запросе
-        if (find(neededTables.begin(), neededTables.end(), table) == neededTables.end()) {
+        if (neededTables.find(table) == -1) {
             return false;
         }
 
-        auto it = find(header.begin(), header.end(), column); // ищем индекс нужной колонки
-        if (it == row.end()) { // проверяем, что колонка с таким именем существует в таблица
+        int columnIndex = header.find(column); // ищем индекс нужной колонки
+        if (columnIndex == -1) { // проверяем, что колонка с таким именем существует в таблица
             return false;
         }
-        int columnIndex = distance(header.begin(), it);
 
-        if (curTable == table && row[columnIndex] != value) {
+        if (curTable == table && row.get(columnIndex) != value) {
             return false;
         }
 

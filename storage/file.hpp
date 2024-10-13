@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <regex>
 
+#include "../data_structures/vector.hpp"
+
 using namespace std;
 
 namespace fs = filesystem;
@@ -20,13 +22,13 @@ int countStringsInFile(string path) {
     return stringsCount;
 }
 
-vector<string> getCSVFromDir(string dirPath) {
-    vector<string> csvFiles;
+Vector<string> getCSVFromDir(string dirPath) {
+    Vector<string> csvFiles;
     smatch match;
     for (const auto & entry : fs::directory_iterator(dirPath)) {
             string filepath = entry.path();
             if (regex_match(filepath, match, pageRegex)) {
-                csvFiles.push_back(entry.path());
+                csvFiles.pushBack(entry.path());
             }
     }
     return csvFiles;
@@ -48,7 +50,7 @@ int incPk(string tablePath, string tableName) {
     return currentPk;
 }
 
-void AddRowInCSV(string pagePath, string tablePath, string tableName, vector<string> values) {
+void AddRowInCSV(string pagePath, string tablePath, string tableName, Vector<string> values) {
     ofstream file(pagePath, ios_base::app);
 
     int pk = incPk(tablePath, tableName);
@@ -56,9 +58,9 @@ void AddRowInCSV(string pagePath, string tablePath, string tableName, vector<str
 
     for (int i = 0; i < values.size(); i++) {
         if (i == values.size() - 1) {
-            file << values[i];
+            file << values.get(i);
         } else {
-            file << values[i] << ",";
+            file << values.get(i) << ",";
         }
     }
     file << endl;
@@ -67,8 +69,8 @@ void AddRowInCSV(string pagePath, string tablePath, string tableName, vector<str
 }
 
 // Функция для чтения CSV-файла в двумерный вектор строк
-vector<vector<string>> readCSV(string filename) {
-    vector<vector<string>> data;
+Vector<Vector<string>> readCSV(string filename) {
+    Vector<Vector<string>> data;
     ifstream file(filename);
 
     if (!file.is_open()) {
@@ -78,22 +80,22 @@ vector<vector<string>> readCSV(string filename) {
 
     string line;
     while (getline(file, line)) {
-        vector<string> row;
+        Vector<string> row;
         stringstream lineStream(line);
         string cell;
 
         while (getline(lineStream, cell, ',')) {
-            row.push_back(cell);
+            row.pushBack(cell);
         }
 
-        data.push_back(row);
+        data.pushBack(row);
     }
 
     file.close();
     return data;
 }
 
-void writeCSV(const string& filename, const vector<vector<string>>& data) {
+void writeCSV(const string& filename, const Vector<Vector<string>>& data) {
     ofstream file(filename);
 
     if (!file.is_open()) {
@@ -101,9 +103,10 @@ void writeCSV(const string& filename, const vector<vector<string>>& data) {
         return;
     }
 
-    for (const auto& row : data) {
+    for (int i = 0; i < data.size(); i++) {
+        Vector<string> row = data.get(i);
         for (size_t i = 0; i < row.size(); ++i) {
-            file << row[i];
+            file << row.get(i);
             // Добавляем запятую, кроме последнего элемента в строке
             if (i < row.size() - 1) {
                 file << ",";
