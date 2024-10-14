@@ -61,10 +61,15 @@ struct Storage {
             if (!fs::exists(pagePath)) {
                 writeList(pagePath, tableName, cols);
 
-                string pkSequencePath = tablePath + "/" + tableName + "_pk_sequence"; 
-                ofstream file1(pkSequencePath);
-                file1 << 0;
-                file1.close();
+                string pkSequencePath = tablePath + "/" + tableName + "_pk_sequence"; // создание файлов pk_sequence
+                ofstream pkSeqFile(pkSequencePath);
+                pkSeqFile << 0;
+                pkSeqFile.close();
+
+                string lockPath = tablePath + "/" + tableName + "_lock"; // создание файлов pk_sequence
+                ofstream lockFile(lockPath);
+                lockFile << 0;
+                lockFile.close();
             } else {
                 cerr << "Page " << pagePath << " already exists" << endl;
             }

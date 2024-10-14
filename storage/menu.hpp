@@ -7,6 +7,7 @@
 #include "../data_structures/vector.hpp"
 #include "../schema/schema.hpp"
 #include "./storage.hpp"
+#include "./lock.hpp"
 #include "./utils.hpp"
 
 using namespace std;
@@ -51,7 +52,14 @@ void menu(string command, Storage storage) {
         }
 
         // Вставляем данные в таблицу
+        string lockPath = storage.schema.name + "/" + tableName + "/" + tableName + "_lock";
+        try {
+            lock(lockPath);
+        } catch (runtime_error& e) {
+            cerr << "Table " + tableName + " blocked" << endl;
+        }
         storage.insert(storage.schema.name, tableName, values);
+        unlock(lockPath);
     } else if (regex_match(command, match, selectRegex)) {
         string columnsStr = match[1].str();
         string tablesStr = match[2].str();
@@ -59,7 +67,6 @@ void menu(string command, Storage storage) {
         Vector<string> columns = split(columnsStr, ",");
 
         storage.select(columns, tables, "");
-        
     } else if (regex_match(command, match, selectWhereRegex)) {
         string columnsStr = match[1].str();
         string tablesStr = match[2].str();
@@ -72,13 +79,27 @@ void menu(string command, Storage storage) {
         string tablesStr = match[1].str();
         Vector<string> tables = split(tablesStr, ",");
 
+        try {
+            lockTables(storage.schema.name, tables);
+        } catch (runtime_error& e) {
+            cerr << e.what() << endl;
+            return;
+        }
         storage.fDelete(tables, "");
+        unlockTables(storage.schema.name, tables);
     } else if (regex_match(command, match, deleteWhereRegex)) {
         string tablesStr = match[1].str();
         string condition = match[2].str();
         Vector<string> tables = split(tablesStr, ",");
 
+        try {
+            lockTables(storage.schema.name, tables);
+        } catch (runtime_error& e) {
+            cerr << e.what() << endl;
+            return;
+        }
         storage.fDelete(tables, condition);
+        unlockTables(storage.schema.name, tables);
     } else {
         cout << "Unknown command." << endl;
     }
