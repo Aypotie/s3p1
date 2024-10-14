@@ -99,6 +99,7 @@ struct Storage {
                 string tableName = tables.get(i);
                 Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
                 for (int j = 0; j < pages.size(); j++) {
+                    cout << 3 << endl;
                     fs::remove(pages.get(j));
                 }
                 string pagePath = schema.name + "/" + tableName + "/1.csv";
@@ -118,7 +119,7 @@ struct Storage {
                         if (isValidRow(node, page.get(k), header, tables, tableName)) {
                             page.remove(k);
                             pageLen--;
-                            i--;
+                            k--;
                         }
                     }
                     writeCSV(pagePath, page);

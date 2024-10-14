@@ -1,6 +1,6 @@
 {
     "name": "shop",
-    "tuples_limit": 4,
+    "tuples_limit": 1000,
     "structure": {
         "fruits": ["name", "count", "price", "weight"],
         "clothes": ["name", "count", "price", "size", "color"]
