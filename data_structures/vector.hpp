@@ -8,10 +8,10 @@ using namespace std;
 template <typename T>
 struct Vector {
 private:
-    T* data;           // Указатель на массив данных
-    int len;           // Текущая длина
-    int cap;           // Максимальная емкость
-    float loadFactor;  // Коэффициент загрузки
+    T* data;
+    int len;
+    int cap;
+    float loadFactor;
 
 public:
     Vector(int initCap = 16, int initLen = 0) {
@@ -90,7 +90,7 @@ public:
             newVector.data[i] = data[i];
         }
         
-        return newVector; // Возвращаем новый вектор
+        return newVector;
     }
 
     void resize(int newLen) {

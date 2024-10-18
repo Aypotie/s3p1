@@ -20,7 +20,6 @@ regex deleteWhereRegex("^DELETE\\s+FROM\\s+([\\w\\d,\\s]+)\\s*WHERE\\s+(.+?)?\\s
 regex selectWhereRegex("^SELECT\\s+([\\w\\d\\.,\\s]+)\\s+FROM\\s+([\\w\\d,\\s]+)\\s+\\s*WHERE\\s+(.+?)?\\s*;?$", regex_constants::icase);
 
 void menu(string command, Storage storage) {
-    // Проверяем команду INSERT INTO
     smatch match;
     if (regex_match(command, match, insertRegex)) {
         string tableName = match[1].str();
@@ -57,6 +56,7 @@ void menu(string command, Storage storage) {
             lock(lockPath);
         } catch (runtime_error& e) {
             cerr << "Table " + tableName + " blocked" << endl;
+            return;
         }
         storage.insert(storage.schema.name, tableName, values);
         unlock(lockPath);

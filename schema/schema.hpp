@@ -10,21 +10,6 @@
 using json = nlohmann::json;
 using namespace std;
 
-ostream& operator<<(ostream& os, vector<string>& v) {
-    for (auto& elem : v) {
-        os << elem << ' ' << endl;
-    }
-    return os;
-}
-
-ostream& operator<<(ostream& os, map<string, vector<string>>& m) {
-    for (auto& pair : m) {
-        os << pair.first << ": " << endl;
-        os << pair.second << endl;
-    }
-    return os;
-}
-
 struct Schema {
     string name;
     int tuplesLimit;
@@ -41,13 +26,13 @@ Schema readSchema(string filename) {
 
     sc->name = jsonSchema["name"];
     sc->tuplesLimit = jsonSchema["tuples_limit"];
-    auto structure = jsonSchema["structure"];
-    for (auto it = structure.begin(); it != structure.end(); ++it) {
+    auto structure = jsonSchema["structure"]; // разные типы
+    for (auto it = structure.begin(); it != structure.end(); it++) {
         Vector<string> columns;
-        for (string column : it.value()) { // Доступ к значению правильно
+        for (string column : it.value()) { 
             columns.pushBack(column);
         }
-        sc->structure.put(it.key(), columns); // Доступ к ключу правильно
+        sc->structure.put(it.key(), columns); 
     }
 
     return *sc;

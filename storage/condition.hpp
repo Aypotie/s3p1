@@ -10,14 +10,12 @@
 
 #include "../data_structures/vector.hpp"
 
-// Тип узла
 enum class NodeType {
     ConditionNode,
     OrNode,
     AndNode
 };
 
-// Структура для узла дерева выражений
 struct Node {
     NodeType nodeType;
     string value;
@@ -28,7 +26,7 @@ struct Node {
         : nodeType(type), value(val), left(l), right(r) {}
 };
 
-// Вспомогательная функция для разделения строки по оператору
+// Вспомогательная функция для разделения строки по оператору OR или AND
 Vector<string> splitByOperator(const string& query, const string& op) {
     string operatorPattern = "\\s+" + op + "\\s+";
     regex re(operatorPattern, regex_constants::icase);
@@ -38,7 +36,7 @@ Vector<string> splitByOperator(const string& query, const string& op) {
     Vector<string> result;
     while (it != end) {
         result.pushBack(*it);
-        ++it;
+        it++;
     }
 
     return result;
@@ -48,7 +46,6 @@ Vector<string> splitByOperator(const string& query, const string& op) {
 Node* getConditionTree(const string& query) {
     Vector<string> orParts = splitByOperator(query, "OR");
 
-    // OR
     if (orParts.size() > 1) {
         Node* root = new Node(NodeType::OrNode);
         root->left = getConditionTree(orParts.get(0));
@@ -56,7 +53,6 @@ Node* getConditionTree(const string& query) {
         return root;
     }
 
-    // AND
     Vector<string> andParts = splitByOperator(query, "AND");
     if (andParts.size() > 1) {
         Node* root = new Node(NodeType::AndNode);
@@ -65,7 +61,7 @@ Node* getConditionTree(const string& query) {
         return root;
     }
 
-    // Simple condition
+    // если в строке нету операторов, то это простое условие
     return new Node(NodeType::ConditionNode, trim(query));
 }
 

@@ -18,8 +18,8 @@ namespace fs = filesystem;
 struct Storage {
     Schema schema;
 
-    Storage(Schema schema) : schema(schema) {
-        this->schema = schema;
+    Storage(Schema sc) {
+        schema = sc;
         createStructure();
     }
 
@@ -39,6 +39,7 @@ struct Storage {
         file.close();
     }
 
+    // директории создает
     void createStructure() {
         if (!fs::exists(schema.name)) {
             fs::create_directory(schema.name);
@@ -66,7 +67,7 @@ struct Storage {
                 pkSeqFile << 0;
                 pkSeqFile.close();
 
-                string lockPath = tablePath + "/" + tableName + "_lock"; // создание файлов pk_sequence
+                string lockPath = tablePath + "/" + tableName + "_lock"; // создание файлов lock
                 ofstream lockFile(lockPath);
                 lockFile << 0;
                 lockFile.close();
@@ -78,7 +79,6 @@ struct Storage {
 
     void insert(string baseDir, string tableName, Vector<string> values) {
         string tablePath = baseDir + "/" + tableName;
-        smatch match;
         Vector<string> pages = getCSVFromDir(tablePath);
 
         for (int i = 0; i < pages.size(); i++) {
@@ -99,7 +99,6 @@ struct Storage {
                 string tableName = tables.get(i);
                 Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
                 for (int j = 0; j < pages.size(); j++) {
-                    cout << 3 << endl;
                     fs::remove(pages.get(j));
                 }
                 string pagePath = schema.name + "/" + tableName + "/1.csv";
@@ -154,6 +153,7 @@ struct Storage {
 
                 if (tableName == colTableName) {
                     colFoundInTables = true;
+                    break;
                 }
             }
             if (!colFoundInTables) {
@@ -194,7 +194,7 @@ struct Storage {
                         return;
                     }
 
-                    // Добавляем колонку в список для вывода
+                    // только названия колонок
                     columnsToSelect.pushBack(requestedColumn);
                 }
 
@@ -282,7 +282,6 @@ struct Storage {
                     }
                     tablesData.pushBack(tableRows);
                 }
-                // cout << tablesData << endl;
                 // Выполняем декартово произведение данных
                 Vector<Vector<string>> crossProduct;
                 Vector<string> currentCombination;

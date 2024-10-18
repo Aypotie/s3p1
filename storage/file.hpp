@@ -28,7 +28,7 @@ Vector<string> getCSVFromDir(string dirPath) {
     for (const auto & entry : fs::directory_iterator(dirPath)) {
             string filepath = entry.path();
             if (regex_match(filepath, match, pageRegex)) {
-                csvFiles.pushBack(entry.path());
+                csvFiles.pushBack(filepath);
             }
     }
     return csvFiles;
