@@ -12,7 +12,6 @@
 using namespace std;
 
 const int PORT = 7432;
-mutex dbMutex;
 
 void nullBuffer(char* buf, int len) {
     for (int i = 0; i < len; i++) {
