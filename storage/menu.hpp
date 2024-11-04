@@ -9,6 +9,7 @@
 #include "./storage.hpp"
 #include "./lock.hpp"
 #include "./utils.hpp"
+#include <sys/socket.h>
 
 using namespace std;
 
@@ -19,24 +20,26 @@ regex deleteRegex("^DELETE\\s+FROM\\s+([\\w\\d,\\s]+)\\s*;?$", regex_constants::
 regex deleteWhereRegex("^DELETE\\s+FROM\\s+([\\w\\d,\\s]+)\\s*WHERE\\s+(.+?)?\\s*;?$", regex_constants::icase);
 regex selectWhereRegex("^SELECT\\s+([\\w\\d\\.,\\s]+)\\s+FROM\\s+([\\w\\d,\\s]+)\\s+\\s*WHERE\\s+(.+?)?\\s*;?$", regex_constants::icase);
 
-void menu(string command, Storage storage) {
+void menu(int clientSocket, string command, Storage* storage) {
     smatch match;
     if (regex_match(command, match, insertRegex)) {
         string tableName = match[1].str();
         string valuesStr = match[2].str();
 
-        if (!storage.schema.structure.contains(tableName)) {
-            cerr << "Table was not found" << endl;
+        if (!storage->schema.structure.contains(tableName)) {
+            string output = "Table was not found\n";
+            send(clientSocket, output.c_str(), output.length(), 0);
             return;
         }
 
-        Vector<string> cols = storage.schema.structure.get(tableName);
+        Vector<string> cols = storage->schema.structure.get(tableName);
 
         // Парсим значения из VALUES(...)
         Vector<string> values = split(valuesStr, ",");
 
         if (values.size() != cols.size()) {
-            cerr << "Incorrect count of columns" << endl;
+            string output = "Incorrect count of columns\n";
+            send(clientSocket, output.c_str(), output.length(), 0);
             return;
         }
 
@@ -45,28 +48,31 @@ void menu(string command, Storage storage) {
             if (values.get(i).front() == '\'' && values.get(i).back() == '\'') {
                 values.set(i, trim(values.get(i), '\''));
             } else {
-                cerr << "Error: All values must be enclosed in quotes." << endl;
+                string output = "Error: All values must be enclosed in quotes.\n";
+                send(clientSocket, output.c_str(), output.length(), 0);
                 return;
             }
         }
 
-        // Вставляем данные в таблицу
-        string lockPath = storage.schema.name + "/" + tableName + "/" + tableName + "_lock";
-        try {
-            lock(lockPath);
-        } catch (runtime_error& e) {
-            cerr << "Table " + tableName + " blocked" << endl;
-            return;
-        }
-        storage.insert(storage.schema.name, tableName, values);
-        unlock(lockPath);
+        storage->insert(storage->schema.name, tableName, values);
     } else if (regex_match(command, match, selectRegex)) {
         string columnsStr = match[1].str();
         string tablesStr = match[2].str();
+
         Vector<string> tables = split(tablesStr, ",");
         Vector<string> columns = split(columnsStr, ",");
 
-        storage.select(columns, tables, "");
+        // Проверка существования таблиц
+        for (int i = 0; i < tables.size(); i++) {
+            string tableName = tables.get(i);
+            if (!storage->schema.structure.contains(tableName)) {
+                string output = "Table '" + tableName + "' does not exist.\n";
+                send(clientSocket, output.c_str(), output.size(), 0);
+                return;
+            }
+        }
+
+        storage->select(clientSocket, columns, tables, "");
     } else if (regex_match(command, match, selectWhereRegex)) {
         string columnsStr = match[1].str();
         string tablesStr = match[2].str();
@@ -74,35 +80,25 @@ void menu(string command, Storage storage) {
         Vector<string> tables = split(tablesStr, ",");
         Vector<string> columns = split(columnsStr, ",");
 
-        storage.select(columns, tables, condition);
+        storage->select(clientSocket, columns, tables, condition);
     } else if (regex_match(command, match, deleteRegex)) {
         string tablesStr = match[1].str();
         Vector<string> tables = split(tablesStr, ",");
 
-        try {
-            lockTables(storage.schema.name, tables);
-        } catch (runtime_error& e) {
-            cerr << e.what() << endl;
-            return;
-        }
-        storage.fDelete(tables, "");
-        unlockTables(storage.schema.name, tables);
+        storage->fDelete(tables, "");
     } else if (regex_match(command, match, deleteWhereRegex)) {
         string tablesStr = match[1].str();
         string condition = match[2].str();
         Vector<string> tables = split(tablesStr, ",");
 
-        try {
-            lockTables(storage.schema.name, tables);
-        } catch (runtime_error& e) {
-            cerr << e.what() << endl;
-            return;
-        }
-        storage.fDelete(tables, condition);
-        unlockTables(storage.schema.name, tables);
+        storage->fDelete(tables, condition);
     } else {
-        cout << "Unknown command." << endl;
+        string output = "Unknown command\n";
+        send(clientSocket, output.c_str(), output.length(), 0);
+        return;
     }
+    string output = "Command executed successfully\n";
+    send(clientSocket, output.c_str(), output.length(), 0);
 }
 
 #endif

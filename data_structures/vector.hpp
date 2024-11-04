@@ -113,6 +113,20 @@ public:
         }
         return -1; // Возвращаем -1, если значение не найдено
     }
+
+    string join(char delimiter = ',') {
+        string result = "";
+
+        for (int i = 0; i < size(); i++) {
+            if (i != size() - 1) {
+                result += data[i] + delimiter;
+            } else {
+                result += data[i];
+            }
+        }
+
+        return result;
+    }
 };
 
 template <typename T>

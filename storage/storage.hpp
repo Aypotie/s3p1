@@ -6,7 +6,9 @@
 #include <cstdio>
 #include <filesystem>
 #include <regex>
+#include <mutex>
 #include "../data_structures/vector.hpp"
+#include "../data_structures/map.hpp"
 #include "../schema/schema.hpp"
 #include "./file.hpp"
 #include "./condition.hpp"
@@ -17,9 +19,17 @@ namespace fs = filesystem;
 
 struct Storage {
     Schema schema;
+    Map<shared_ptr<mutex>> tableMutex;
 
     Storage(Schema sc) {
         schema = sc;
+
+        Vector<string> tableNames = schema.structure.keys();
+        for (int i = 0; i < tableNames.size(); i++) {
+            auto mtx = make_shared<mutex>();
+            tableMutex.put(tableNames.get(i), mtx);
+        }
+
         createStructure();
     }
 
@@ -78,6 +88,8 @@ struct Storage {
     }
 
     void insert(string baseDir, string tableName, Vector<string> values) {
+        lock_guard<mutex> lock(*tableMutex.get(tableName)); // блокировка таблицы
+
         string tablePath = baseDir + "/" + tableName;
         Vector<string> pages = getCSVFromDir(tablePath);
 
@@ -97,6 +109,8 @@ struct Storage {
         if (condition == "") {
             for (int i = 0; i < tables.size(); i++) {
                 string tableName = tables.get(i);
+                lock_guard<mutex> lock(*tableMutex.get(tableName)); // блокировка таблицы
+
                 Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
                 for (int j = 0; j < pages.size(); j++) {
                     fs::remove(pages.get(j));
@@ -108,6 +122,8 @@ struct Storage {
             Node* node = getConditionTree(condition);
             for (int i = 0; i < tables.size(); i++) {
                 string tableName = tables.get(i);
+                lock_guard<mutex> lock(*tableMutex.get(tableName)); // блокировка таблицы
+
                 Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
                 for (int j = 0; j < pages.size(); j++) {
                     string pagePath = pages.get(j);
@@ -127,85 +143,111 @@ struct Storage {
         }
     }
 
-    void select(Vector<string> columns, Vector<string> tables, string condition) {
-        // Проверяем, что таблица существует и это единственная таблица
-        for (int i = 0; i < tables.size(); i++) {
-            string tableName = tables.get(i);
-            if (!schema.structure.contains(tableName)) {
-                cerr << "Table '" << tableName << "' does not exist." << endl;
-                return;
-            }
-        }
-        
-        // Проверяем, что все таблицы есть в колонках
-        Vector<string> tablesInCols;
-        for (int j = 0; j < tables.size(); j++) {
-            string tableName = tables.get(j);
-            bool colFoundInTables = false;
+    void select(int clientSocket, Vector<string> columns, Vector<string> tables, string condition) {
+    string output;
+
+    // Если нет условия WHERE
+    if (condition.empty()) {
+        if (tables.size() == 1) { // Одиночная таблица
+            string tableName = tables.get(0);
+            Vector<string> availableColumns = schema.structure.get(tableName);
+            Vector<string> columnsToSelect;
+
             for (int i = 0; i < columns.size(); i++) {
-                Vector<string> parts = split(columns.get(i), ".");
-                if (parts.size() != 2) {
-                    cerr << "incorrect column " + columns.get(i) << endl;
+                string fullColumn = columns.get(i);
+                size_t dotPos = fullColumn.find(".");
+                if (dotPos == string::npos) {
+                    output = "Error: Column '" + fullColumn + "' is not in 'table.column' format.\n";
+                    send(clientSocket, output.c_str(), output.size(), 0);
                     return;
                 }
-                string colTableName = parts.get(0);
-                string column = parts.get(1);
 
-                if (tableName == colTableName) {
-                    colFoundInTables = true;
-                    break;
+                string requestedTable = fullColumn.substr(0, dotPos);
+                string requestedColumn = fullColumn.substr(dotPos + 1);
+
+                if (requestedTable != tableName) {
+                    output = "Error: Column '" + fullColumn + "' does not belong to table '" + tableName + "'.\n";
+                    send(clientSocket, output.c_str(), output.size(), 0);
+                    return;
                 }
-            }
-            if (!colFoundInTables) {
-                cerr << "table " + tableName + " not found in columns" << endl;
-                return;
-            }
-        }
 
-        if (condition == "") { // без WHERE
-            if (tables.size() == 1) { // для одной таблицы
-                string tableName = tables.get(0);
+                if (availableColumns.find(requestedColumn) == -1) {
+                    output = "Error: Column '" + requestedColumn + "' does not exist in table '" + tableName + "'.\n";
+                    send(clientSocket, output.c_str(), output.size(), 0);
+                    return;
+                }
 
-                // Проверяем, что все колонки относятся к таблице
+                columnsToSelect.pushBack(requestedColumn);
+            }
+
+            Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
+            for (int i = 0; i < pages.size(); i++) {
+                string pagePath = pages.get(i);
+                Vector<Vector<string>> page = readCSV(pagePath);
+                Vector<string> header = page.get(0);
+
+                Vector<int> columnIndexes;
+                for (int j = 0; j < columnsToSelect.size(); j++) {
+                    string col = columnsToSelect.get(j);
+                    int index = header.find(col);
+                    if (index != -1) {
+                        columnIndexes.pushBack(index);
+                    }
+                }
+
+                output += columns.join() + '\n';
+                for (int j = 1; j < page.size(); j++) {
+                    Vector<string> row = page.get(j);
+                    for (int k = 0; k < columnIndexes.size(); k++) {
+                        output += row.get(columnIndexes.get(k));
+                        if (k < columnIndexes.size() - 1) {
+                            output += ", ";
+                        }
+                    }
+                    output += "\n";
+                }
+                send(clientSocket, output.c_str(), output.size(), 0);
+                output.clear();
+            }
+        } else { 
+            // Ветка обработки для случая с несколькими таблицами без условия WHERE (Декартово произведение)
+            Vector<Vector<Vector<string>>> tablesData;
+            Vector<Vector<int>> columnIndexesList;
+
+            for (int i = 0; i < tables.size(); i++) {
+                string tableName = tables.get(i);
                 Vector<string> availableColumns = schema.structure.get(tableName);
                 Vector<string> columnsToSelect;
 
-                for (int i = 0; i < columns.size(); i++) {
-                    string fullColumn = columns.get(i);
-                    // Разделяем строку на таблицу и колонку (формат таблица.колонка)
+                for (int j = 0; j < columns.size(); j++) {
+                    string fullColumn = columns.get(j);
                     size_t dotPos = fullColumn.find(".");
                     if (dotPos == string::npos) {
-                        cerr << "Error: Column '" << fullColumn << "' is not in 'table.column' format." << endl;
+                        output = "Error: Column '" + fullColumn + "' is not in 'table.column' format.\n";
+                        send(clientSocket, output.c_str(), output.size(), 0);
                         return;
                     }
 
                     string requestedTable = fullColumn.substr(0, dotPos);
                     string requestedColumn = fullColumn.substr(dotPos + 1);
 
-                    // Проверяем, что таблица совпадает с той, что указана в запросе
-                    if (requestedTable != tableName) {
-                        cerr << "Error: Column '" << fullColumn << "' does not belong to table '" << tableName << "'." << endl;
-                        return;
+                    if (requestedTable == tableName) {
+                        if (availableColumns.find(requestedColumn) == -1) {
+                            output = "Error: Column '" + requestedColumn + "' does not exist in table '" + tableName + "'.\n";
+                            send(clientSocket, output.c_str(), output.size(), 0);
+                            return;
+                        }
+                        columnsToSelect.pushBack(requestedColumn);
                     }
-
-                    // Проверяем, что колонка существует в таблице
-                    if (availableColumns.find(requestedColumn) == -1) {
-                        cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
-                        return;
-                    }
-
-                    // только названия колонок
-                    columnsToSelect.pushBack(requestedColumn);
                 }
 
-                // Теперь читаем CSV-файлы и выводим только запрошенные колонки
+                Vector<Vector<string>> tableRows;
                 Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
                 for (int i = 0; i < pages.size(); i++) {
                     string pagePath = pages.get(i);
                     Vector<Vector<string>> page = readCSV(pagePath);
                     Vector<string> header = page.get(0);
 
-                    // Определяем индексы нужных колонок
                     Vector<int> columnIndexes;
                     for (int j = 0; j < columnsToSelect.size(); j++) {
                         string col = columnsToSelect.get(j);
@@ -214,113 +256,56 @@ struct Storage {
                             columnIndexes.pushBack(index);
                         }
                     }
+                    columnIndexesList.pushBack(columnIndexes);
 
-                    for (int j = 0; j < page.size(); j++) {
-                        Vector<string> row = page.get(j);
-                        // Выводим только те колонки, которые были запрошены
-                        for (int k = 0; k < columnIndexes.size(); k++) {
-                            cout << row.get(columnIndexes.get(k));
-                            if (k < columnIndexes.size() - 1) {
-                                cout << ", ";
-                            }
-                        }
-                        cout << endl;
+                    for (int j = 1; j < page.size(); j++) {
+                        tableRows.pushBack(page.get(j));
                     }
                 }
-            } else { // для нескольких
-                Vector<Vector<Vector<string>>> tablesData;
-                Vector<Vector<int>> columnIndexesList;
-
-                // Собираем данные для всех таблиц
-                for (int i = 0; i < tables.size(); i++) {
-                    string tableName = tables.get(i);
-                    Vector<string> availableColumns = schema.structure.get(tableName);
-                    Vector<string> columnsToSelect;
-
-                    // Определяем, какие колонки нужно выбирать из каждой таблицы
-                    for (int j = 0; j < columns.size(); j++) {
-                        string fullColumn = columns.get(j);
-                        size_t dotPos = fullColumn.find(".");
-                        if (dotPos == string::npos) {
-                            cerr << "Error: Column '" << fullColumn << "' is not in 'table.column' format." << endl;
-                            return;
-                        }
-
-                        string requestedTable = fullColumn.substr(0, dotPos);
-                        string requestedColumn = fullColumn.substr(dotPos + 1);
-                        if (requestedTable == tableName) {
-                            if (availableColumns.find(requestedColumn) == -1) {
-                                cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
-                                return;
-                            }
-                            columnsToSelect.pushBack(requestedColumn);
-                        }
-                    }
-
-                    // Читаем CSV-файлы таблицы и собираем строки
-                    Vector<Vector<string>> tableRows;
-                    Vector<string> pages = getCSVFromDir(schema.name + "/" + tableName);
-                    for (int i = 0; i < pages.size(); i++) {
-                        string pagePath = pages.get(i);
-                        Vector<Vector<string>> page = readCSV(pagePath);
-                        Vector<string> header = page.get(0);
-
-                        // Определяем индексы нужных колонок
-                        Vector<int> columnIndexes;
-                        for (int j = 0; j < columnsToSelect.size(); j++) {
-                            string col = columnsToSelect.get(j);
-                            int index = header.find(col);
-                            if (index != -1) {
-                                columnIndexes.pushBack(index);
-                            }
-                        }
-                        columnIndexesList.pushBack(columnIndexes);
-
-                        for (int j = 1; j < page.size(); j++) {
-                            tableRows.pushBack(page.get(j));
-                        }
-                    }
-                    tablesData.pushBack(tableRows);
-                }
-                // Выполняем декартово произведение данных
-                Vector<Vector<string>> crossProduct;
-                Vector<string> currentCombination;
-                // cout << columnIndexesList << endl;
-                function<void(int)> generateCombinations = [&](int depth) {
-                    if (depth == tables.size()) {
-                        crossProduct.pushBack(currentCombination.copy());
-                        return;
-                    }
-
-                    Vector<Vector<string>> tableData = tablesData.get(depth);
-                    for (int i = 0; i < tableData.size(); i++) {
-                        Vector<string> row = tableData.get(i);
-                        Vector<int> columnIndexes = columnIndexesList.get(depth);
-                        for (int j = 0; j < columnIndexes.size(); j++) {
-                            currentCombination.pushBack(row.get(columnIndexes.get(j)));
-                        }
-                        generateCombinations(depth + 1);
-                        int newLen = currentCombination.size() - columnIndexes.size();
-                        currentCombination.resize(newLen);
-                    }
-                };
-
-                generateCombinations(0);
-
-                // Выводим результаты
-                cout << columns << endl;
-                for (int i = 0; i < crossProduct.size(); i++) {
-                    Vector<string> combination = crossProduct.get(i);
-                    for (int j = 0; j < combination.size(); j++) {
-                        cout << combination.get(j);
-                        if (j < combination.size() - 1) {
-                            cout << ", ";
-                        }
-                    }
-                    cout << endl;
-                }
+                tablesData.pushBack(tableRows);
             }
-        } else { // с WHERE
+
+            // Выполнение декартова произведения данных
+            Vector<Vector<string>> crossProduct;
+            Vector<string> currentCombination;
+
+            function<void(int)> generateCombinations = [&](int depth) {
+                if (depth == tables.size()) {
+                    crossProduct.pushBack(currentCombination.copy());
+                    return;
+                }
+
+                Vector<Vector<string>> tableData = tablesData.get(depth);
+                for (int i = 0; i < tableData.size(); i++) {
+                    Vector<string> row = tableData.get(i);
+                    Vector<int> columnIndexes = columnIndexesList.get(depth);
+                    for (int j = 0; j < columnIndexes.size(); j++) {
+                        currentCombination.pushBack(row.get(columnIndexes.get(j)));
+                    }
+                    generateCombinations(depth + 1);
+                    int newLen = currentCombination.size() - columnIndexes.size();
+                    currentCombination.resize(newLen);
+                }
+            };
+
+            generateCombinations(0);
+
+            // Отправка результатов
+            output += columns.join() + '\n';
+            for (int i = 0; i < crossProduct.size(); i++) {
+                Vector<string> combination = crossProduct.get(i);
+                for (int j = 0; j < combination.size(); j++) {
+                    output += combination.get(j);
+                    if (j < combination.size() - 1) {
+                        output += ", ";
+                    }
+                }
+                output += "\n";
+            }
+            send(clientSocket, output.c_str(), output.size(), 0);
+            output.clear();
+        }
+    } else { // с WHERE
             Node* node = getConditionTree(condition);
             if (tables.size() == 1) { // для одной таблицы
                 string tableName = tables.get(0);
@@ -334,7 +319,8 @@ struct Storage {
                     // Разделяем строку на таблицу и колонку (формат таблица.колонка)
                     size_t dotPos = fullColumn.find(".");
                     if (dotPos == string::npos) {
-                        cerr << "Error: Column '" << fullColumn << "' is not in 'table.column' format." << endl;
+                        output = "Error: Column '" + fullColumn + "' is not in 'table.column' format" + ".\n";
+                        send(clientSocket, output.c_str(), output.size(), 0);
                         return;
                     }
 
@@ -343,13 +329,15 @@ struct Storage {
 
                     // Проверяем, что таблица совпадает с той, что указана в запросе
                     if (requestedTable != tableName) {
-                        cerr << "Error: Column '" << fullColumn << "' does not belong to table '" << tableName << "'." << endl;
+                        output = "Error: Column '" + fullColumn + "' does not belong to table '" + tableName + "'.\n";
+                        send(clientSocket, output.c_str(), output.size(), 0);
                         return;
                     }
 
                     // Проверяем, что колонка существует в таблице
                     if (availableColumns.find(requestedColumn) == -1) {
-                        cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
+                        output = "Error: Column '" + requestedColumn + "' does not exist in table '" + tableName + "'.\n";
+                        send(clientSocket, output.c_str(), output.size(), 0);
                         return;
                     }
 
@@ -378,15 +366,16 @@ struct Storage {
                         // Выводим только те колонки, которые были запрошены
                         if (isValidRow(node, row, header, tables, tableName)) {
                             for (int k = 0; k < columnIndexes.size(); k++) {
-                                cout << row.get(columnIndexes.get(k));
+                                output += row.get(columnIndexes.get(k));
                                 if (k < columnIndexes.size() - 1) {
-                                    cout << ", ";
+                                    output += ", ";
                                 }
                             }
-                            cout << endl;
+                            output += '\n';
                         }
                     }
                 }
+                send(clientSocket, output.c_str(), output.size(), 0);
             } else { // для нескольких
                 Vector<Vector<Vector<string>>> tablesData;
                 Vector<Vector<int>> columnIndexesList;
@@ -402,7 +391,8 @@ struct Storage {
                         string fullColumn = columns.get(j);
                         size_t dotPos = fullColumn.find(".");
                         if (dotPos == string::npos) {
-                            cerr << "Error: Column '" << fullColumn << "' is not in 'table.column' format." << endl;
+                            output = "Error: Column '" + fullColumn + "' is not in 'table.column' format.\n";
+                            send(clientSocket, output.c_str(), output.size(), 0);
                             return;
                         }
 
@@ -411,7 +401,8 @@ struct Storage {
 
                         if (requestedTable == tableName) {
                             if (availableColumns.find(requestedColumn) == -1) {
-                                cerr << "Error: Column '" << requestedColumn << "' does not exist in table '" << tableName << "'." << endl;
+                                output = "Error: Column '" +requestedColumn + "' does not exist in table '" + tableName + "'.\n";
+                                send(clientSocket, output.c_str(), output.size(), 0);
                                 return;
                             }
                             columnsToSelect.pushBack(requestedColumn);
@@ -472,18 +463,20 @@ struct Storage {
 
                 generateCombinations(0);
 
-                // Выводим результаты
-                cout << columns << endl;
+                // Отправка результатов
+                output += columns.join() + '\n';
                 for (int i = 0; i < crossProduct.size(); i++) {
                     Vector<string> combination = crossProduct.get(i);
                     for (int j = 0; j < combination.size(); j++) {
-                        cout << combination.get(j);
+                        output += combination.get(j);
                         if (j < combination.size() - 1) {
-                            cout << ", ";
+                            output += ", ";
                         }
                     }
-                    cout << endl;
+                    output += "\n";
                 }
+                send(clientSocket, output.c_str(), output.size(), 0);
+                output.clear();
             }
         }
     }
